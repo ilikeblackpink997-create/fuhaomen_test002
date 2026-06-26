@@ -1,0 +1,912 @@
+// ==================== 全局状态 ====================
+let userInfo = {
+gender: '',
+age: '',
+chronicDisease: '',
+menstruation: '', // 'yes' | 'no'
+menstruationStart: '', // day of month (1-31)
+menstruationEnd: '', // day of month (1-31)
+menopause: '' // 'yes' | 'no' (50+女性)
+};
+
+let map = null;
+let currentMarker = null;
+let destinationMarker = null;
+let currentTileLayer = null;
+
+// ==================== 页面切换 ====================
+function showPage(pageId) {
+document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+document.getElementById(pageId).classList.add('active');
+}
+
+function goToInfo() {
+// 如果已有保存的信息（包括经期），直接跳转主页
+const savedInfo = localStorage.getItem('healthTravelUserInfo') || sessionStorage.getItem('healthTravelUserInfo');
+if (savedInfo) {
+try {
+const info = JSON.parse(savedInfo);
+if (info.gender && info.age && info.chronicDisease) {
+userInfo = info;
+goToHome();
+return;
+}
+} catch(e) {}
+}
+showPage('page-info');
+checkMenstruationVisibility();
+}
+
+function goToWelcome() {
+showPage('page-welcome');
+}
+
+function goToEditInfo() {
+// 从保存的信息恢复并进入编辑页
+const savedInfo = localStorage.getItem('healthTravelUserInfo') || sessionStorage.getItem('healthTravelUserInfo');
+if (savedInfo) {
+try {
+const info = JSON.parse(savedInfo);
+userInfo = info;
+// 恢复性别选择UI
+if (userInfo.gender) {
+document.querySelectorAll('.gender-option').forEach(el => el.classList.remove('selected'));
+const genderEl = document.getElementById('gender-' + userInfo.gender);
+if (genderEl) genderEl.classList.add('selected');
+}
+// 恢复年龄
+if (userInfo.age) {
+document.getElementById('age-input').value = userInfo.age;
+}
+// 恢复慢性病
+if (userInfo.chronicDisease) {
+const radio = document.querySelector(`input[name="chronic"][value="${userInfo.chronicDisease}"]`);
+if (radio) radio.checked = true;
+}
+// 恢复月经
+if (userInfo.menstruation) {
+const radio = document.querySelector(`input[name="menstruation"][value="${userInfo.menstruation}"]`);
+if (radio) radio.checked = true;
+if (userInfo.menstruation === 'yes') {
+document.getElementById('menstruation-period-group').classList.remove('hidden');
+document.getElementById('period-start').value = userInfo.menstruationStart || '';
+document.getElementById('period-end').value = userInfo.menstruationEnd || '';
+}
+}
+// 恢复绝经
+if (userInfo.menopause) {
+const radio = document.querySelector(`input[name="menopause"][value="${userInfo.menopause}"]`);
+if (radio) radio.checked = true;
+}
+// 恢复remember checkbox
+if (localStorage.getItem('healthTravelUserInfo')) {
+document.getElementById('remember-info').checked = true;
+}
+} catch(e) {}
+}
+showPage('page-info');
+checkMenstruationVisibility();
+}
+
+function goToHome() {
+showPage('page-home');
+updateUserTag();
+setTimeout(() => initMap(), 200);
+}
+
+// ==================== Toast 提示 ====================
+function showToast(msg) {
+const toast = document.createElement('div');
+toast.className = 'toast';
+toast.textContent = msg;
+document.body.appendChild(toast);
+setTimeout(() => toast.remove(), 2000);
+}
+
+// ==================== 性别选择 ====================
+function selectGender(gender) {
+userInfo.gender = gender;
+document.querySelectorAll('.gender-option').forEach(el => el.classList.remove('selected'));
+document.getElementById('gender-' + gender).classList.add('selected');
+checkMenstruationVisibility();
+}
+
+// ==================== 月经相关 ====================
+function checkMenstruationVisibility() {
+const ageInput = document.getElementById('age-input');
+const age = parseInt(ageInput.value);
+const menstruationGroup = document.getElementById('menstruation-group');
+const menstruationPeriodGroup = document.getElementById('menstruation-period-group');
+const menopauseGroup = document.getElementById('menopause-group');
+
+if (userInfo.gender === 'female' && age > 10) {
+menstruationGroup.classList.remove('hidden');
+if (userInfo.menstruation === 'yes') {
+menstruationPeriodGroup.classList.remove('hidden');
+} else {
+menstruationPeriodGroup.classList.add('hidden');
+}
+// 50岁以上显示绝经问题
+if (age >= 50) {
+if (menopauseGroup) menopauseGroup.classList.remove('hidden');
+} else {
+if (menopauseGroup) menopauseGroup.classList.add('hidden');
+userInfo.menopause = '';
+document.querySelectorAll('input[name="menopause"]').forEach(r => r.checked = false);
+}
+} else {
+menstruationGroup.classList.add('hidden');
+menstruationPeriodGroup.classList.add('hidden');
+if (menopauseGroup) menopauseGroup.classList.add('hidden');
+userInfo.menstruation = '';
+userInfo.menstruationStart = '';
+userInfo.menstruationEnd = '';
+userInfo.menopause = '';
+// 清除radio选择
+document.querySelectorAll('input[name="menstruation"]').forEach(r => r.checked = false);
+document.querySelectorAll('input[name="menopause"]').forEach(r => r.checked = false);
+}
+
+// 填充日期下拉
+fillPeriodSelects();
+}
+
+let periodSelectsFilled = false;
+
+function fillPeriodSelects() {
+const startSelect = document.getElementById('period-start');
+const endSelect = document.getElementById('period-end');
+if (periodSelectsFilled) return;
+
+startSelect.innerHTML = `<option value="">${t('period_start_placeholder')}</option>`;
+endSelect.innerHTML = `<option value="">${t('period_end_placeholder')}</option>`;
+
+for (let i = 1; i <= 31; i++) { startSelect.innerHTML +=`<option value="${i}">${i}${t('day_suffix')}</option>`;
+    endSelect.innerHTML += `<option value="${i}">${i}${t('day_suffix')}</option>`;
+    }
+    periodSelectsFilled = true;
+    }
+
+    function selectMenstruation(value) {
+    userInfo.menstruation = value;
+    const periodGroup = document.getElementById('menstruation-period-group');
+    if (value === 'yes') {
+    periodGroup.classList.remove('hidden');
+    } else {
+    periodGroup.classList.add('hidden');
+    userInfo.menstruationStart = '';
+    userInfo.menstruationEnd = '';
+    document.getElementById('period-start').value = '';
+    document.getElementById('period-end').value = '';
+    }
+    }
+
+    function selectMenopause(value) {
+    userInfo.menopause = value;
+    }
+
+    // 监听年龄输入变化
+    document.addEventListener('DOMContentLoaded', function() {
+    const ageInput = document.getElementById('age-input');
+    if (ageInput) {
+    ageInput.addEventListener('input', checkMenstruationVisibility);
+    ageInput.addEventListener('change', checkMenstruationVisibility);
+    }
+
+    // 恢复保存的信息（优先 localStorage，其次 sessionStorage）
+    const savedInfo = localStorage.getItem('healthTravelUserInfo') || sessionStorage.getItem('healthTravelUserInfo');
+    if (savedInfo) {
+    userInfo = JSON.parse(savedInfo);
+    // 恢复性别选择UI
+    if (userInfo.gender) {
+    document.querySelectorAll('.gender-option').forEach(el => el.classList.remove('selected'));
+    const genderEl = document.getElementById('gender-' + userInfo.gender);
+    if (genderEl) genderEl.classList.add('selected');
+    }
+    // 恢复年龄
+    if (userInfo.age) {
+    document.getElementById('age-input').value = userInfo.age;
+    }
+    // 恢复慢性病
+    if (userInfo.chronicDisease) {
+    const radio = document.querySelector(`input[name="chronic"][value="${userInfo.chronicDisease}"]`);
+    if (radio) radio.checked = true;
+    }
+    // 恢复月经
+    if (userInfo.menstruation) {
+    const radio = document.querySelector(`input[name="menstruation"][value="${userInfo.menstruation}"]`);
+    if (radio) radio.checked = true;
+    if (userInfo.menstruation === 'yes') {
+    document.getElementById('menstruation-period-group').classList.remove('hidden');
+    document.getElementById('period-start').value = userInfo.menstruationStart || '';
+    document.getElementById('period-end').value = userInfo.menstruationEnd || '';
+    }
+    }
+    // 恢复绝经
+    if (userInfo.menopause) {
+    const radio = document.querySelector(`input[name="menopause"][value="${userInfo.menopause}"]`);
+    if (radio) radio.checked = true;
+    }
+    // 恢复月经可见性
+    checkMenstruationVisibility();
+    // 如果来自 localStorage 则默认勾选记住
+    if (localStorage.getItem('healthTravelUserInfo')) {
+    document.getElementById('remember-info').checked = true;
+    }
+    }
+
+    applyLanguage();
+    updateLangBtnText();
+    });
+
+    // ==================== 慢性疾病选择 ====================
+    function selectChronic(value) {
+    userInfo.chronicDisease = value;
+    }
+
+    // ==================== 提交信息 ====================
+    function submitInfo() {
+    const ageInput = document.getElementById('age-input');
+    userInfo.age = ageInput.value.trim();
+
+    if (!userInfo.gender) {
+    showToast(t('toast_select_gender'));
+    return;
+    }
+    if (!userInfo.age) {
+    showToast(t('toast_enter_age'));
+    return;
+    }
+    const ageNum = parseInt(userInfo.age);
+    if (isNaN(ageNum) || ageNum < 1 || ageNum> 120) {
+        showToast(t('toast_invalid_age'));
+        return;
+        }
+        if (!userInfo.chronicDisease) {
+        showToast(t('toast_select_chronic'));
+        return;
+        }
+
+        // 绝经检查（50岁以上女性）
+        if (userInfo.gender === 'female' && ageNum >= 50) {
+        if (!userInfo.menopause) {
+        showToast(t('toast_select_menopause'));
+        return;
+        }
+        if (userInfo.menopause === 'yes') {
+        // 已绝经，跳过月经问题
+        userInfo.menstruation = 'no';
+        userInfo.menstruationStart = '';
+        userInfo.menstruationEnd = '';
+        }
+        }
+
+        // 月经检查（未绝经的女性 >10岁）
+        if (userInfo.gender === 'female' && ageNum > 10 && userInfo.menopause !== 'yes') {
+        if (!userInfo.menstruation) {
+        showToast(t('toast_select_menstruation'));
+        return;
+        }
+        if (userInfo.menstruation === 'yes') {
+        userInfo.menstruationStart = document.getElementById('period-start').value;
+        userInfo.menstruationEnd = document.getElementById('period-end').value;
+        if (!userInfo.menstruationStart || !userInfo.menstruationEnd) {
+        showToast(t('toast_select_period'));
+        return;
+        }
+        }
+        }
+
+        // 勾选"记住信息"→ localStorage（持久化），否则→ sessionStorage（会话结束即清除）
+        const remember = document.getElementById('remember-info').checked;
+        if (remember) {
+        localStorage.setItem('healthTravelUserInfo', JSON.stringify(userInfo));
+        sessionStorage.removeItem('healthTravelUserInfo');
+        } else {
+        sessionStorage.setItem('healthTravelUserInfo', JSON.stringify(userInfo));
+        localStorage.removeItem('healthTravelUserInfo');
+        }
+        goToHome();
+        }
+
+        // ==================== 清除保存的信息 ====================
+        function clearUserInfo() {
+        localStorage.removeItem('healthTravelUserInfo');
+        sessionStorage.removeItem('healthTravelUserInfo');
+        userInfo = { gender: '', age: '', chronicDisease: '', menstruation: '', menstruationStart: '', menstruationEnd: '', menopause: '' };
+        showToast(t('clear_info_done'));
+        // 隐藏编辑和清除按钮，隐藏更改身份按钮
+        const editBtn = document.getElementById('edit-info-btn');
+        const clearBtn = document.getElementById('clear-info-btn');
+        const changeBtn = document.getElementById('change-identity-btn');
+        if (editBtn) editBtn.style.display = 'none';
+        if (clearBtn) clearBtn.style.display = 'none';
+        if (changeBtn) changeBtn.style.display = 'none';
+        updateUserTag();
+        }
+
+        // ==================== 更新用户标签 ====================
+        function updateUserTag() {
+        const savedInfo = localStorage.getItem('healthTravelUserInfo') || sessionStorage.getItem('healthTravelUserInfo');
+        if (savedInfo) {
+        userInfo = JSON.parse(savedInfo);
+        }
+        // 控制右上角按钮和左上角"更改身份信息"按钮的显示
+        const hasSavedInfo = !!(localStorage.getItem('healthTravelUserInfo') || sessionStorage.getItem('healthTravelUserInfo'));
+        const editBtn = document.getElementById('edit-info-btn');
+        const clearBtn = document.getElementById('clear-info-btn');
+        const changeBtn = document.getElementById('change-identity-btn');
+        if (editBtn) {
+        editBtn.style.display = hasSavedInfo ? 'inline-flex' : 'none';
+        }
+        if (clearBtn) {
+        clearBtn.style.display = hasSavedInfo ? 'inline-flex' : 'none';
+        }
+        if (changeBtn) {
+        changeBtn.style.display = hasSavedInfo ? 'inline-flex' : 'none';
+        }
+        }
+
+        // ==================== 地图初始化 ====================
+        function initMap() {
+        if (map) {
+        map.invalidateSize();
+        return;
+        }
+
+        map = L.map('map-container', {
+        center: [39.90923, 116.397428],
+        zoom: 5,
+        zoomControl: true
+        });
+
+        // 根据当前语言选择地图图层（中文使用中文标注瓦片）
+        currentTileLayer = getTileLayer(currentLang).addTo(map);
+
+        // 点击地图选择目的地
+        map.on('click', function(e) {
+        setDestination(e.latlng.lat, e.latlng.lng);
+        });
+
+        getLocation();
+        }
+
+        // ==================== 地图图层 ====================
+        // 所有语言统一使用 CartoDB Voyager（基于 OpenStreetMap），全球覆盖，各国有详细地名标注
+        function getTileLayer(lang) {
+        const url = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+        const options = {
+        subdomains: ['a', 'b', 'c', 'd'],
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+        maxZoom: 19
+        };
+        return L.tileLayer(url, options);
+        }
+
+        function switchMapLanguage(lang) {
+        if (!map || !currentTileLayer) return;
+        map.removeLayer(currentTileLayer);
+        currentTileLayer = getTileLayer(lang).addTo(map);
+        }
+
+        // ==================== 获取用户位置 ====================
+        function getLocation() {
+        const footerInfo = document.getElementById('footer-info');
+
+        if (!navigator.geolocation) {
+        footerInfo.innerHTML = `<span>${t('location_denied')}</span>`;
+        return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+        function(position) {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        map.setView([lat, lng], 10);
+
+        if (currentMarker) map.removeLayer(currentMarker);
+
+        const markerIcon = L.divIcon({
+        className: 'custom-marker',
+        html: '<div style="width:20px;height:20px;background:#1976d2;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        popupAnchor: [0, -12]
+        });
+
+        currentMarker = L.marker([lat, lng], { icon: markerIcon })
+        .addTo(map)
+        .bindPopup('<strong>📍 ' + t('my_location') + '</strong>');
+
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1&accept-language=${currentLang}`)
+        .then(res => res.json())
+        .then(data => {
+        if (data && data.display_name) {
+        footerInfo.innerHTML = `<span>📍 ${data.display_name}</span>`;
+        }
+        })
+        .catch(() => {});
+        },
+        function() {
+        footerInfo.innerHTML = `<span>${t('no_location')}</span>`;
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+        );
+        }
+
+        // ==================== 地图搜索 ====================
+        function toggleMapSearch() {
+        const box = document.getElementById('map-search-box');
+        box.classList.toggle('hidden');
+        if (!box.classList.contains('hidden')) {
+        document.getElementById('map-search-input').focus();
+        } else {
+        document.getElementById('map-search-results').classList.add('hidden');
+        }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+        const mapSearchInput = document.getElementById('map-search-input');
+        if (mapSearchInput) {
+        let searchTimeout;
+        mapSearchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        const query = this.value.trim();
+        if (query.length < 2) { document.getElementById('map-search-results').classList.add('hidden'); return; } searchTimeout=setTimeout(()=> searchMapPlaces(query), 400);
+            });
+            }
+            });
+
+            function searchMapPlaces(query) {
+            const resultsDiv = document.getElementById('map-search-results');
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=8&accept-language=${currentLang}`)
+            .then(res => res.json())
+            .then(data => {
+            if (data.length === 0) {
+            resultsDiv.innerHTML = `<div class="dest-no-result">${t('no_results')}</div>`;
+            } else {
+            resultsDiv.innerHTML = data.map(d =>
+            `<div class="dest-result-item" onclick="goToSearchResult(${d.lat},${d.lon},'${d.display_name.replace(/'/g,"'")}' ,${d.boundingbox ? d.boundingbox[3] - d.boundingbox[2] : 1})">
+                <span>📍 ${d.display_name}</span>
+            </div>`
+            ).join('');
+            }
+            resultsDiv.classList.remove('hidden');
+            })
+            .catch(() => {
+            resultsDiv.innerHTML = `<div class="dest-no-result">${t('fetch_fail')}</div>`;
+            resultsDiv.classList.remove('hidden');
+            });
+            }
+
+            function goToSearchResult(lat, lng, name, span) {
+            if (map) {
+            const zoom = span < 0.5 ? 12 : span < 1 ? 10 : span < 5 ? 7 : 5; map.setView([lat, lng], zoom); setDestination(lat, lng); document.getElementById('map-search-box').classList.add('hidden'); document.getElementById('map-search-results').classList.add('hidden'); document.getElementById('map-search-input').value='' ; } } //====================选择目的地====================function setDestination(lat, lng) { if (destinationMarker) map.removeLayer(destinationMarker); const destIcon=L.divIcon({ className: 'custom-marker' , html: '<div style="width:24px;height:24px;background:#43a047;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 10px rgba(67,160,71,0.5);animation:pulse 1.5s infinite;"></div>' , iconSize: [24, 24], iconAnchor: [12, 12], popupAnchor: [0, -14] }); destinationMarker=L.marker([lat, lng], { icon: destIcon }) .addTo(map) .bindPopup('<strong>🎯 ' + t('selected_dest') + '</strong>');
+
+                // 获取地名
+                fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1&accept-language=${currentLang}`)
+                .then(res => res.json())
+                .then(data => {
+                let placeName = '';
+                if (data && data.address) {
+                const addr = data.address;
+                placeName = addr.city || addr.town || addr.county || addr.state || addr.country || t('unknown');
+                if (addr.country && addr.country !== placeName) {
+                placeName = addr.country + ' ' + placeName;
+                }
+                }
+                if (!placeName) placeName = data.display_name || `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+
+                document.getElementById('panel-title').textContent = '📍 ' + placeName;
+                document.getElementById('weather-panel').classList.remove('hidden');
+                fetchWeather(lat, lng, placeName);
+                recommendMonths(lat, placeName);
+                })
+                .catch(() => {
+                document.getElementById('panel-title').textContent = `📍 ${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+                document.getElementById('weather-panel').classList.remove('hidden');
+                fetchWeather(lat, lng, '');
+                recommendMonths(lat, '');
+                });
+
+                document.getElementById('footer-info').innerHTML =
+                `<span>✅ ${t('map_click_hint')} (${lat.toFixed(2)}, ${lng.toFixed(2)})</span>`;
+                }
+
+                // ==================== 关闭天气面板 ====================
+                function closeWeatherPanel() {
+                document.getElementById('weather-panel').classList.add('hidden');
+                if (destinationMarker) {
+                map.removeLayer(destinationMarker);
+                destinationMarker = null;
+                }
+                document.getElementById('footer-info').innerHTML = `<span>${t('no_location')}</span>`;
+                }
+
+                // ==================== 获取天气数据 ====================
+                function fetchWeather(lat, lng, placeName) {
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto`;
+
+                document.getElementById('w-temp').textContent = t('loading');
+                document.getElementById('w-humidity').textContent = t('loading');
+                document.getElementById('w-desc').textContent = t('loading');
+                document.getElementById('w-wind').textContent = t('loading');
+
+                fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                if (data && data.current) {
+                const c = data.current;
+                document.getElementById('w-temp').textContent = c.temperature_2m + '°C';
+                document.getElementById('w-humidity').textContent = c.relative_humidity_2m + '%';
+                document.getElementById('w-desc').textContent = getWeatherDesc(c.weather_code);
+                document.getElementById('w-wind').textContent = c.wind_speed_10m + ' km/h';
+                updateHealthAdvice(c.temperature_2m, c.relative_humidity_2m, placeName);
+                } else {
+                setWeatherError();
+                }
+                })
+                .catch(() => setWeatherError());
+                }
+
+                function setWeatherError() {
+                const errText = t('fetch_fail');
+                document.getElementById('w-temp').textContent = errText;
+                document.getElementById('w-humidity').textContent = errText;
+                document.getElementById('w-desc').textContent = errText;
+                document.getElementById('w-wind').textContent = errText;
+                }
+
+                function getWeatherDesc(code) {
+                const map = {
+                0: '☀️ ' + t('sunny'), 1: '🌤️ ' + t('sunny'), 2: '⛅ ' + t('cloudy'), 3: '☁️ ' + t('overcast'),
+                45: '🌫️ ' + t('fog'), 48: '🌫️ ' + t('fog'),
+                51: '🌧️ ' + t('light_rain'), 53: '🌧️ ' + t('moderate_rain'), 55: '🌧️ ' + t('heavy_rain'),
+                61: '🌧️ ' + t('light_rain'), 63: '🌧️ ' + t('moderate_rain'), 65: '🌧️ ' + t('rainstorm'),
+                71: '❄️ ' + t('light_snow'), 73: '❄️ ' + t('moderate_snow'), 75: '❄️ ' + t('heavy_snow'),
+                80: '🌧️ ' + t('light_rain'), 81: '🌧️ ' + t('moderate_rain'), 82: '⛈️ ' + t('rainstorm'),
+                85: '❄️ ' + t('light_snow'), 86: '❄️ ' + t('moderate_snow'),
+                95: '⛈️ ' + t('thunderstorm'), 96: '⛈️ ' + t('thunderstorm'), 99: '⛈️ ' + t('thunderstorm')
+                };
+                return map[code] || t('unknown');
+                }
+
+                // ==================== 推荐旅行月份 ====================
+                function recommendMonths(lat, placeName) {
+                const absLat = Math.abs(lat);
+
+                document.querySelectorAll('.month-tag').forEach(el => {
+                el.classList.remove('recommend', 'best');
+                });
+
+                let goodMonths = [];
+                let bestMonths = [];
+                let tipText = '';
+
+                if (absLat > 50) {
+                goodMonths = [5, 6, 7, 8, 9];
+                bestMonths = [6, 7, 8];
+                tipText = t('tip_high_lat');
+                } else if (absLat > 35) {
+                goodMonths = [4, 5, 6, 9, 10];
+                bestMonths = [4, 5, 9, 10];
+                tipText = t('tip_temperate');
+                } else if (absLat > 23.5) {
+                goodMonths = [3, 4, 5, 10, 11];
+                bestMonths = [4, 10, 11];
+                tipText = t('tip_subtropical');
+                } else {
+                goodMonths = [11, 12, 1, 2, 3];
+                bestMonths = [11, 12, 1, 2];
+                tipText = t('tip_tropical');
+                }
+
+                goodMonths.forEach(m => {
+                const el = document.querySelector(`.month-tag[data-month="${m}"]`);
+                if (el) el.classList.add('recommend');
+                });
+                bestMonths.forEach(m => {
+                const el = document.querySelector(`.month-tag[data-month="${m}"]`);
+                if (el) el.classList.add('best');
+                });
+
+                document.getElementById('travel-tip').textContent = tipText;
+                }
+
+                // ==================== 健康旅行建议 ====================
+                function updateHealthAdvice(temp, humidity, placeName) {
+                const adviceEl = document.getElementById('health-advice');
+                let advice = '';
+
+                const savedInfo = localStorage.getItem('healthTravelUserInfo');
+                if (savedInfo) {
+                userInfo = JSON.parse(savedInfo);
+                }
+
+                // 温度相关
+                if (temp > 35) {
+                advice += t('advice_extreme_hot');
+                } else if (temp > 30) {
+                advice += t('advice_hot');
+                } else if (temp > 25) {
+                advice += t('advice_warm');
+                } else if (temp > 15) {
+                advice += t('advice_pleasant');
+                } else if (temp > 5) {
+                advice += t('advice_cool');
+                } else if (temp > -10) {
+                advice += t('advice_cold');
+                } else {
+                advice += t('advice_extreme_cold');
+                }
+
+                // 湿度相关
+                if (humidity > 80) {
+                advice += t('advice_high_humidity');
+                } else if (humidity < 30) { advice +=t('advice_low_humidity'); } // 经期提醒：避免大量运动和下水 if (userInfo.menstruation==='yes' && userInfo.menstruationStart && userInfo.menstruationEnd) { advice +=t('advice_menstruation_avoid'); } // 慢性疾病 if (userInfo.chronicDisease==='yes' ) { advice +=t('advice_chronic_warn'); if (temp> 32 || temp < 0) { advice +=t('advice_chronic_extreme'); } } // 年龄相关 const age=parseInt(userInfo.age); if (age> 60) {
+                        advice += t('advice_elderly');
+                        } else if (age < 12) { advice +=t('advice_child'); } adviceEl.textContent=advice || t('advice_default'); } //====================路线生成====================let routeState={ destLat: null, destLng: null, destName: '' , intensity: '' , // 'low' | 'mid' | 'high' companion: '' , // 'solo' | 'elder' | 'friend' | 'kid' greenMode: '' , // 'walk' | 'bike' | 'transit' | 'ev' startDate: '' , endDate: '' }; // 绿色出行全局状态 let greenTravelMode='' ; // 'walk' | 'bike' | 'transit' | 'ev' //====================打开路线弹窗====================function openRouteModal() { // 获取当前目的地信息 if (!destinationMarker) { showToast(t('toast_select_dest')); return; } const latlng=destinationMarker.getLatLng(); routeState.destLat=latlng.lat; routeState.destLng=latlng.lng; const panelTitle=document.getElementById('panel-title'); routeState.destName=panelTitle ? panelTitle.textContent.replace('📍 ', '') : '';
+
+  // 更新弹窗中的目的地显示
+  document.getElementById(' route-dest-name').textContent='📍 ' + routeState.destName; // 获取用户信息 const savedInfo=localStorage.getItem('healthTravelUserInfo') || sessionStorage.getItem('healthTravelUserInfo'); if (savedInfo) { userInfo=JSON.parse(savedInfo); } // 重置选择 routeState.intensity='' ; routeState.companion='' ; routeState.greenMode='' ; routeState.startDate='' ; routeState.endDate='' ; document.querySelectorAll('.route-intensity-option').forEach(el=> el.classList.remove('selected'));
+                            document.querySelectorAll('.route-companion-option').forEach(el => el.classList.remove('selected'));
+                            document.querySelectorAll('.route-green-option').forEach(el => el.classList.remove('selected'));
+                            document.getElementById('route-start-date').value = '';
+                            document.getElementById('route-end-date').value = '';
+                            document.getElementById('route-days-hint').textContent = t('route_days_hint');
+                            document.getElementById('route-result').classList.add('hidden');
+
+                            // 年龄>60 自动选轻松 + 默认选"和长辈去"（如果用户年龄大）
+                            const age = parseInt(userInfo.age);
+                            if (age > 60) {
+                            selectIntensity('low');
+                            selectCompanion('elder');
+                            }
+
+                            // 显示弹窗
+                            document.getElementById('route-modal').classList.remove('hidden');
+
+                            // 设置日期最小值为今天
+                            const today = new Date().toISOString().split('T')[0];
+                            document.getElementById('route-start-date').setAttribute('min', today);
+                            document.getElementById('route-end-date').setAttribute('min', today);
+
+                            // 监听日期变化
+                            const startInput = document.getElementById('route-start-date');
+                            const endInput = document.getElementById('route-end-date');
+                            startInput.onchange = updateRouteDays;
+                            endInput.onchange = updateRouteDays;
+                            }
+
+                            function closeRouteModal() {
+                            document.getElementById('route-modal').classList.add('hidden');
+                            }
+
+                            function updateRouteDays() {
+                            const startVal = document.getElementById('route-start-date').value;
+                            const endVal = document.getElementById('route-end-date').value;
+                            routeState.startDate = startVal;
+                            routeState.endDate = endVal;
+
+                            if (startVal && endVal) {
+                            const start = new Date(startVal);
+                            const end = new Date(endVal);
+                            const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                            if (diffDays > 0) {
+                            document.getElementById('route-days-hint').textContent =
+                            t('route_days_count').replace('{days}', diffDays);
+                            } else {
+                            document.getElementById('route-days-hint').textContent = t('route_invalid_date');
+                            }
+                            }
+                            }
+
+                            function selectIntensity(level) {
+                            routeState.intensity = level;
+                            document.querySelectorAll('.route-intensity-option').forEach(el => el.classList.remove('selected'));
+                            document.getElementById('intensity-' + level).classList.add('selected');
+                            }
+
+                            function selectCompanion(type) {
+                            routeState.companion = type;
+                            document.querySelectorAll('.route-companion-option').forEach(el => el.classList.remove('selected'));
+                            document.getElementById('companion-' + type).classList.add('selected');
+                            }
+
+                            // ==================== 绿色出行选择（天气面板内） ====================
+                            function selectGreenMode(mode) {
+                            if (greenTravelMode === mode) {
+                            greenTravelMode = '';
+                            document.querySelectorAll('.green-option').forEach(el => el.classList.remove('selected'));
+                            document.getElementById('green-carbon-info').classList.add('hidden');
+                            return;
+                            }
+                            greenTravelMode = mode;
+                            document.querySelectorAll('.green-option').forEach(el => el.classList.remove('selected'));
+                            document.getElementById('green-' + mode).classList.add('selected');
+                            updateCarbonInfo(mode);
+                            }
+
+                            function selectRouteGreenMode(mode) {
+                            if (routeState.greenMode === mode) {
+                            routeState.greenMode = '';
+                            document.querySelectorAll('.route-green-option').forEach(el => el.classList.remove('selected'));
+                            return;
+                            }
+                            routeState.greenMode = mode;
+                            document.querySelectorAll('.route-green-option').forEach(el => el.classList.remove('selected'));
+                            document.getElementById('route-green-' + mode).classList.add('selected');
+                            }
+
+                            // ==================== 碳减排计算 ====================
+                            function updateCarbonInfo(mode) {
+                            const carbonInfo = document.getElementById('green-carbon-info');
+                            const carbonValue = document.getElementById('carbon-value');
+                            const treesValue = document.getElementById('trees-value');
+
+                            carbonInfo.classList.remove('hidden');
+
+                            // 碳减排系数 (kg CO₂ per km vs. private car)
+                            const carbonFactors = {
+                            walk: { perKm: 0.21, desc: t('green_carbon_tip_walk') },
+                            bike: { perKm: 0.19, desc: t('green_carbon_tip_bike') },
+                            transit: { perKm: 0.12, desc: t('green_carbon_tip_transit') },
+                            ev: { perKm: 0.10, desc: t('green_carbon_tip_ev') }
+                            };
+
+                            // 预估每天旅行距离 15km
+                            const dailyDistance = 15;
+                            const tripDays = 3; // 默认3天行程预估
+                            const totalDistance = dailyDistance * tripDays;
+                            const carbonSaved = (carbonFactors[mode].perKm * totalDistance).toFixed(1);
+                            const treesEquiv = (carbonSaved / 21).toFixed(1); // 1棵树每年吸收约21kg CO₂
+
+                            carbonValue.textContent = carbonSaved + ' kg CO₂';
+                            treesValue.textContent = treesEquiv + ' ' + t('month');
+                            }
+
+                            // ==================== 生成路线 ====================
+                            function generateRoute() {
+                            if (!routeState.destName) {
+                            showToast(t('toast_select_dest'));
+                            return;
+                            }
+                            if (!routeState.startDate || !routeState.endDate) {
+                            showToast(t('route_toast_select_date'));
+                            return;
+                            }
+
+                            const start = new Date(routeState.startDate);
+                            const end = new Date(routeState.endDate);
+                            const totalDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                            if (totalDays <= 0) { showToast(t('route_invalid_date')); return; } if (!routeState.intensity) { showToast(t('route_toast_select_intensity')); return; } if (!routeState.companion) { showToast(t('route_toast_select_companion')); return; } const savedInfo=localStorage.getItem('healthTravelUserInfo') || sessionStorage.getItem('healthTravelUserInfo'); if (savedInfo) { userInfo=JSON.parse(savedInfo); } const age=parseInt(userInfo.age); const isElderly=age> 60;
+                                const isWithElder = routeState.companion === 'elder';
+                                const isWithKid = routeState.companion === 'kid';
+                                const isWithFriend = routeState.companion === 'friend';
+                                const isSolo = routeState.companion === 'solo';
+
+                                // 和长辈去：自动使用银发慢游模式
+                                const effectiveElderly = isElderly || isWithElder;
+
+                                // 根据运动量和年龄确定节奏
+                                let schedule = [];
+                                let useRealRoute = false;
+                                let realRoute = null;
+                                let routeHighlights = '';
+                                let routeGlobalTips = '';
+                                let routeClothing = '';
+                                const destName = routeState.destName;
+
+                                // 优先尝试获取真实目的地路线数据
+                                if (typeof getRouteForDest === 'function') {
+                                realRoute = getRouteForDest(destName);
+                                if (realRoute && realRoute.days && realRoute.days.length > 0) {
+                                useRealRoute = true;
+                                routeHighlights = realRoute.highlights || '';
+                                routeGlobalTips = realRoute.tips || '';
+                                routeClothing = realRoute.clothing || '';
+                                }
+                                }
+
+                                // 生成每天的行程
+                                const activityTemplates = getActivityTemplates(routeState.intensity, effectiveElderly, totalDays, destName);
+
+                                for (let day = 0; day < totalDays; day++) { const currentDate=new Date(start); currentDate.setDate(start.getDate() + day); const dateStr=formatDate(currentDate); const dayName=getDayName(day, totalDays); // 确定时间安排 let morningStart, morningEnd, afternoonStart, afternoonEnd, eveningEnd; if (effectiveElderly) { // 长辈模式：早上早开始，晚上早结束 morningStart='06:30' ; morningEnd='11:00' ; afternoonStart='13:00' ; afternoonEnd='17:00' ; eveningEnd='19:00' ; } else if (isWithKid) { // 带小孩：稍晚出发，预留充足午休 morningStart='09:00' ; morningEnd='12:00' ; afternoonStart='14:30' ; afternoonEnd='17:00' ; eveningEnd='20:00' ; } else if (isWithFriend) { // 和朋友：更灵活，晚上可以晚一些 morningStart='09:00' ; morningEnd='12:30' ; afternoonStart='14:00' ; afternoonEnd='18:00' ; eveningEnd='22:00' ; } else { // 自己去：标准安排 morningStart='08:00' ; morningEnd='12:00' ; afternoonStart='13:30' ; afternoonEnd='17:30' ; eveningEnd='21:00' ; } // 绿色出行交通方式标注 let greenTransport='' ; const greenTransportMap={ walk: ' 🚶' + t('green_walk'), bike: ' 🚲' + t('green_bike'), transit: ' 🚌' + t('green_transit'), ev: ' ⚡' + t('green_ev') }; if (routeState.greenMode && greenTransportMap[routeState.greenMode]) { greenTransport=greenTransportMap[routeState.greenMode]; } // 如果有真实路线数据，使用真实数据；否则回退到模板 let morningAct, lunchAct, afternoonAct, eveningAct, dayTip; if (useRealRoute && day < realRoute.days.length) { const realDay=realRoute.days[day]; morningAct=realDay.morning; lunchAct=realDay.lunch; afternoonAct=realDay.afternoon; eveningAct=realDay.evening; dayTip=realDay.tip; } else { const template=activityTemplates[day % activityTemplates.length]; morningAct=template.morning; lunchAct=template.lunch; afternoonAct=template.afternoon; eveningAct=template.evening; dayTip=template.tip; } schedule.push({ day: day + 1, date: dateStr, dayName: dayName, morningStart: morningStart, morningEnd: morningEnd, afternoonStart: afternoonStart, afternoonEnd: afternoonEnd, eveningEnd: eveningEnd, morningActivity: morningAct + greenTransport, lunchActivity: lunchAct, afternoonActivity: afternoonAct + greenTransport, eveningActivity: eveningAct, tip: dayTip, isElderly: effectiveElderly, greenMode: routeState.greenMode }); } // 渲染路线 renderRoute(schedule, effectiveElderly, routeState.intensity, useRealRoute, routeHighlights, routeGlobalTips, routeClothing, routeState.companion, routeState.greenMode, totalDays); } // 计算绿色出行碳减排 function calcGreenCarbon(greenMode, totalDays) { if (!greenMode) return null; const carbonFactors={ walk: { perKm: 0.21 }, bike: { perKm: 0.19 }, transit: { perKm: 0.12 }, ev: { perKm: 0.10 } }; const factor=carbonFactors[greenMode]; if (!factor) return null; const dailyDistance=15; const totalDistance=dailyDistance * totalDays; const carbonSaved=(factor.perKm * totalDistance).toFixed(1); const treesEquiv=(carbonSaved / 21).toFixed(1); return { carbonSaved, treesEquiv, totalDistance }; } function getDayName(dayIndex, totalDays) { if (totalDays===1) return t('route_day_single'); if (dayIndex===0) return t('route_day_first'); if (dayIndex===totalDays - 1) return t('route_day_last'); return t('route_day_n').replace('{n}', dayIndex + 1); } function formatDate(date) { const y=date.getFullYear(); const m=String(date.getMonth() + 1).padStart(2, '0' ); const d=String(date.getDate()).padStart(2, '0' ); return y + '/' + m + '/' + d; } function getActivityTemplates(intensity, _isElderly, totalDays, destName) { const templates={ low: { single: [ { morning: t('route_act_visit') + destName + t('route_act_landmark'), lunch: t('route_act_local_food'), afternoon: t('route_act_museum'), evening: t('route_act_relax'), tip: t('route_tip_relax') } ], multi: [ { morning: t('route_act_city_walk'), lunch: t('route_act_cafe'), afternoon: t('route_act_park'), evening: t('route_act_night_market'), tip: t('route_tip_photo') }, { morning: t('route_act_museum'), lunch: t('route_act_local_food'), afternoon: t('route_act_old_town'), evening: t('route_act_relax'), tip: t('route_tip_culture') }, { morning: t('route_act_scenic') + destName + t('route_act_view'), lunch: t('route_act_picnic'), afternoon: t('route_act_spa'), evening: t('route_act_local_show'), tip: t('route_tip_relax') } ] }, mid: { single: [ { morning: t('route_act_city_walk'), lunch: t('route_act_local_food'), afternoon: t('route_act_hiking_light'), evening: t('route_act_night_market'), tip: t('route_tip_active') } ], multi: [ { morning: t('route_act_hiking_light'), lunch: t('route_act_picnic'), afternoon: t('route_act_scenic') + destName + t('route_act_explore'), evening: t('route_act_local_show'), tip: t('route_tip_active') }, { morning: t('route_act_city_walk'), lunch: t('route_act_cafe'), afternoon: t('route_act_cycling'), evening: t('route_act_night_market'), tip: t('route_tip_photo') }, { morning: t('route_act_museum'), lunch: t('route_act_local_food'), afternoon: t('route_act_old_town'), evening: t('route_act_river_cruise'), tip: t('route_tip_culture') } ] }, high: { single: [ { morning: t('route_act_hiking_hard'), lunch: t('route_act_picnic'), afternoon: t('route_act_outdoor_sport'), evening: t('route_act_night_market'), tip: t('route_tip_challenge') } ], multi: [ { morning: t('route_act_hiking_hard'), lunch: t('route_act_picnic'), afternoon: t('route_act_outdoor_sport'), evening: t('route_act_local_show'), tip: t('route_tip_challenge') }, { morning: t('route_act_cycling_long'), lunch: t('route_act_local_food'), afternoon: t('route_act_climbing'), evening: t('route_act_night_market'), tip: t('route_tip_hydrate') }, { morning: t('route_act_water_sport'), lunch: t('route_act_beach_lunch'), afternoon: t('route_act_snorkeling'), evening: t('route_act_campfire'), tip: t('route_tip_sunscreen') } ] } }; const intensityData=templates[intensity]; if (totalDays===1) { return intensityData.single; } return intensityData.multi; } function renderRoute(schedule, isElderly, _intensity, useRealRoute, highlights, globalTips, clothing, companion, greenMode, totalDays) { const resultDiv=document.getElementById('route-result'); const timelineDiv=document.getElementById('route-timeline'); const tipsDiv=document.getElementById('route-tips'); const ageTag=document.getElementById('route-age-tag'); // 同行者标签 const companionLabels={ solo: '🧑 ' + t('companion_solo'), elder: '👴 ' + t('companion_elder'), friend: '👫 ' + t('companion_friend'), kid: '👶 ' + t('companion_kid') }; // 年龄/模式标签 if (isElderly) { ageTag.textContent='👴 ' + t('route_elderly_mode'); ageTag.style.display='inline-block' ; } else { ageTag.style.display='none' ; } // 同行者标签（始终显示） if (companion && companionLabels[companion]) { ageTag.style.display='inline-block' ; if (ageTag.textContent && !ageTag.textContent.includes(companionLabels[companion])) { ageTag.textContent +=' | ' + companionLabels[companion]; } else if (!ageTag.textContent) { ageTag.textContent=companionLabels[companion]; } } // 真实路线标签 + 亮点 if (useRealRoute) { ageTag.textContent='⭐ ' + t('route_real_route'); ageTag.style.display='inline-block' ; if (highlights) { ageTag.textContent +=' | 🏷️ ' + highlights; } } let html='' ; schedule.forEach(day=> {
+                                    html += `
+                                    <div class="route-day-card">
+                                        <div class="route-day-header">
+                                            <span class="route-day-num">${t('route_day_label').replace('{n}', day.day)}</span>
+                                            <span class="route-day-date">${day.date}</span>
+                                            <span class="route-day-tag">${day.dayName}</span>
+                                        </div>
+                                        <div class="route-timeline-list">
+                                            <div class="route-time-item">
+                                                <div class="route-time-dot morning"></div>
+                                                <div class="route-time-content">
+                                                    <span class="route-time-label">🌅 ${day.morningStart} - ${day.morningEnd}</span>
+                                                    <span class="route-time-act">${day.morningActivity}</span>
+                                                </div>
+                                            </div>
+                                            <div class="route-time-item">
+                                                <div class="route-time-dot lunch"></div>
+                                                <div class="route-time-content">
+                                                    <span class="route-time-label">🍽️ ${day.morningEnd} - ${day.afternoonStart}</span>
+                                                    <span class="route-time-act">${day.lunchActivity}</span>
+                                                </div>
+                                            </div>
+                                            <div class="route-time-item">
+                                                <div class="route-time-dot afternoon"></div>
+                                                <div class="route-time-content">
+                                                    <span class="route-time-label">☀️ ${day.afternoonStart} - ${day.afternoonEnd}</span>
+                                                    <span class="route-time-act">${day.afternoonActivity}</span>
+                                                </div>
+                                            </div>
+                                            <div class="route-time-item">
+                                                <div class="route-time-dot evening"></div>
+                                                <div class="route-time-content">
+                                                    <span class="route-time-label">🌙 ${day.afternoonEnd} - ${day.eveningEnd}</span>
+                                                    <span class="route-time-act">${day.eveningActivity}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        ${day.tip ? `<div class="route-day-tip">💡 ${day.tip}</div>` : ''}
+                                    </div>
+                                    `;
+                                    });
+
+                                    timelineDiv.innerHTML = html;
+
+                                    // 全局提示
+                                    let tips = '';
+                                    if (globalTips) {
+                                    tips += '<p>📋 ' + globalTips + '</p>';
+                                    }
+                                    if (clothing) {
+                                    tips += '<p>👗 <strong>' + t('route_clothing') + '</strong>：' + clothing + '</p>';
+                                    }
+                                    // 同行者相关提示
+                                    if (companion === 'elder') {
+                                    tips += '<p>👴 ' + t('route_companion_elder_tip') + '</p>';
+                                    tips += '<p>⏰ ' + t('route_elderly_schedule_tip') + '</p>';
+                                    }
+                                    if (companion === 'kid') {
+                                    tips += '<p>👶 ' + t('route_companion_kid_tip') + '</p>';
+                                    }
+                                    if (companion === 'friend') {
+                                    tips += '<p>👫 ' + t('route_companion_friend_tip') + '</p>';
+                                    }
+                                    if (companion === 'solo') {
+                                    tips += '<p>🧑 ' + t('route_companion_solo_tip') + '</p>';
+                                    }
+                                    // SDG 绿色出行提示
+                                    if (greenMode) {
+                                    const carbonData = calcGreenCarbon(greenMode, totalDays || 3);
+                                    const greenIcons = { walk: '🚶', bike: '🚲', transit: '🚌', ev: '⚡' };
+                                    tips += '<div class="route-green-banner">';
+                                        tips += '<p>🌍 <strong>SDG 可持续旅行</strong></p>';
+                                        tips += '<p>' + greenIcons[greenMode] + ' ' + t('route_green_tip') + '</p>';
+                                        if (carbonData) {
+                                        tips += '<p>🌱 ' + t('route_green_carbon') + '：<strong>' + carbonData.carbonSaved + ' kg CO₂</strong></p>';
+                                        tips += '<p>🌳 ' + t('green_trees_equiv') + '：<strong>' + carbonData.treesEquiv + ' ' + t('month') + '</strong></p>';
+                                        }
+                                        tips += '<p style="font-size:11px;color:#888;">🏙️ ' + t('sdg_11') + ' | 🌡️ ' + t('sdg_13') + ' | ❤️ ' + t('sdg_3') + '</p>';
+                                        tips += '</div>';
+                                    }
+
+                                    if (isElderly) {
+                                    tips += '<p>👴 ' + t('route_elderly_tip') + '</p>';
+                                    tips += '<p>⏰ ' + t('route_elderly_schedule_tip') + '</p>';
+                                    }
+                                    if (userInfo.chronicDisease === 'yes') {
+                                    tips += '<p>⚠️ ' + t('route_chronic_tip') + '</p>';
+                                    }
+                                    if (userInfo.menstruation === 'yes' && userInfo.menstruationStart && userInfo.menstruationEnd) {
+                                    tips += '<p>🚫 ' + t('route_menstruation_tip') + '</p>';
+                                    }
+                                    tips += '<p>💧 ' + t('route_hydrate_tip') + '</p>';
+
+                                    tipsDiv.innerHTML = tips;
+
+                                    resultDiv.classList.remove('hidden');
+                                    resultDiv.scrollIntoView({ behavior: 'smooth' });
+                                    }
